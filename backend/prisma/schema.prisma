@@ -1,0 +1,121 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Direction {
+  BUY
+  SELL
+}
+
+enum Grade {
+  APLUS
+  A
+  B
+  C
+  D
+}
+
+enum Session {
+  ASIAN
+  LONDON
+  NEWYORK
+  OTHER
+}
+
+// Preset, structurally-evaluable rule types. CUSTOM is a free-text rule the
+// user attaches to trades manually (no auto-evaluation); every other type is
+// checked against trade data by the rule-engine service.
+enum RuleType {
+  CUSTOM
+  MIN_RR
+  MAX_TRADES_PER_DAY
+  MAX_TRADES_PER_WEEK
+  NO_TRADES_AFTER_TIME
+  MAX_DAILY_LOSS
+  REQUIRE_CONFIRMATION
+}
+
+enum RuleWeight {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  plan         String   @default("PRO")
+  createdAt    DateTime @default(now())
+
+  trades Trade[]
+  rules  Rule[]
+}
+
+model Rule {
+  id          String     @id @default(uuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  type        RuleType   @default(CUSTOM)
+  params      Json?
+  weight      RuleWeight @default(MEDIUM)
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+
+  breaks      TradeRuleBreak[]
+
+  @@index([userId, active])
+}
+
+model Trade {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  symbol         String
+  direction      Direction
+  entryPrice     Float?
+  exitPrice      Float?
+  size           Float?
+  entryTime      DateTime
+  exitTime       DateTime?
+  pnl            Float
+  rr             Float?
+  grade          Grade
+  autoGrade      Grade?
+  gradeOverridden Boolean  @default(false)
+  session        Session
+  entryConfirmed Boolean   @default(true)
+  ruleBroken     Boolean   @default(false)
+  ruleNote       String?
+  notes          String?
+
+  ruleBreaks     TradeRuleBreak[]
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId, entryTime])
+}
+
+// Many-to-many: one trade can violate several rules at once.
+model TradeRuleBreak {
+  id      String  @id @default(uuid())
+  tradeId String
+  trade   Trade   @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  ruleId  String
+  rule    Rule    @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  note    String?
+
+  @@unique([tradeId, ruleId])
+  @@index([ruleId])
+}

@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tradeiq
+      POSTGRES_PASSWORD: tradeiq
+      POSTGRES_DB: tradeiq
+    ports:
+      - "5432:5432"
+    volumes:
+      - tradeiq_pgdata:/var/lib/postgresql/data
+
+volumes:
+  tradeiq_pgdata:
