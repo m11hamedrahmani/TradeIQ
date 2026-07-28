@@ -42,6 +42,7 @@ export const api = {
   createTrade: (payload) => request('/trades', { method: 'POST', body: payload }),
   updateTrade: (id, payload) => request(`/trades/${id}`, { method: 'PUT', body: payload }),
   deleteTrade: (id) => request(`/trades/${id}`, { method: 'DELETE' }),
+  evaluateTrade: (draft) => request('/trades/evaluate', { method: 'POST', body: draft }),
   importTrades: (file) => {
     const form = new FormData();
     form.append('file', file);

@@ -400,6 +400,30 @@ a { color: inherit; text-decoration: none; }
   padding-left: 25px; margin-top: 8px; gap: 12px; flex-wrap: wrap;
 }
 .rule-footer-stats { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+.rule-weight { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.5px; text-transform: uppercase; }
+.rule-weight.low { background: var(--green-dim); color: var(--green); }
+.rule-weight.medium { background: var(--yellow-dim); color: var(--yellow); }
+.rule-weight.high { background: var(--red-dim); color: var(--red); }
+.rule-type-badge { font-size: 10px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+
+.field-hint { font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+
+.rule-checklist {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 180px; overflow-y: auto;
+  background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px;
+  padding: 8px 10px;
+}
+.rule-check-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.rule-check-row input[type="checkbox"] { width: auto; flex-shrink: 0; }
+.rule-check-row label { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); margin: 0; text-transform: none; letter-spacing: 0; font-family: 'Syne', sans-serif; cursor: pointer; }
+.rule-suggested-tag { flex-shrink: 0; }
+.rule-check-row.suggested label { color: var(--accent); }
+.rule-suggested-tag { font-size: 9px; color: var(--accent); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.5px; }
+
+.grade-preview { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface2); border-radius: 8px; margin-bottom: 4px; }
+.grade-preview-label { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.6px; }
+.grade-preview-value { font-size: 15px; font-weight: 800; font-family: 'JetBrains Mono', monospace; }
 
 @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 

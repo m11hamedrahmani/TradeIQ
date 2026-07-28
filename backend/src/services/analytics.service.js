@@ -229,26 +229,31 @@ function computeHeatmap(trades, start, end) {
 
 // ---------- RULE BREAKDOWN ----------
 
-// Groups rule-broken trades by the specific rule they violated (falling back
-// to an "unspecified" bucket for older/free-text breaks with no rule link),
-// so the worst-offending rule surfaces by both frequency and $ cost.
+// Groups rule-broken trades by every specific rule they violated (a trade
+// can break several at once, and contributes its full cost to each one it
+// broke), falling back to an "unspecified" bucket for freeform breaks with
+// no rule link, so the worst-offending rule surfaces by frequency and $ cost.
 function computeRuleBreakdown(trades) {
   const broken = trades.filter((t) => t.ruleBroken);
   const map = new Map();
 
-  for (const t of broken) {
-    const key = t.ruleId || 'unlinked';
-    if (!map.has(key)) {
-      map.set(key, {
-        ruleId: t.ruleId,
-        title: t.rule ? t.rule.title : 'Unspecified rule break',
-        count: 0,
-        cost: 0,
-      });
-    }
+  const bump = (key, title, cost) => {
+    if (!map.has(key)) map.set(key, { ruleId: key === 'unlinked' ? null : key, title, count: 0, cost: 0 });
     const entry = map.get(key);
     entry.count += 1;
-    entry.cost += Math.max(-t.pnl, 0);
+    entry.cost += cost;
+  };
+
+  for (const t of broken) {
+    const cost = Math.max(-t.pnl, 0);
+    const links = t.ruleBreaks || [];
+    if (links.length === 0) {
+      bump('unlinked', 'Unspecified rule break', cost);
+    } else {
+      for (const link of links) {
+        bump(link.ruleId, link.rule ? link.rule.title : 'Unspecified rule break', cost);
+      }
+    }
   }
 
   return Array.from(map.values())

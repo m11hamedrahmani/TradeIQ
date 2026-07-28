@@ -55,6 +55,19 @@ export default function Rules() {
     return breakdown.find((b) => b.ruleId === ruleId);
   }
 
+  function describeType(rule) {
+    const p = rule.params || {};
+    switch (rule.type) {
+      case 'MIN_RR': return `Min 1:${p.minRR} R:R`;
+      case 'MAX_TRADES_PER_DAY': return `Max ${p.maxCount}/day`;
+      case 'MAX_TRADES_PER_WEEK': return `Max ${p.maxCount}/week`;
+      case 'NO_TRADES_AFTER_TIME': return `Cutoff ${String(p.cutoffHour).padStart(2, '0')}:00 UTC`;
+      case 'MAX_DAILY_LOSS': return `Max daily loss $${p.maxLoss}`;
+      case 'REQUIRE_CONFIRMATION': return 'Requires confirmation';
+      default: return 'Custom';
+    }
+  }
+
   return (
     <>
       <Topbar title="My Rules" sub={`${rules.length} rules defined`} />
@@ -84,8 +97,10 @@ export default function Rules() {
                       <div className="pattern-top">
                         <div className="pattern-emoji">{rule.active ? '📏' : '🗄️'}</div>
                         <div className="pattern-title">{rule.title}</div>
+                        <span className={`rule-weight ${rule.weight.toLowerCase()}`}>{rule.weight}</span>
                         {!rule.active && <span className="card-badge yellow">Archived</span>}
                       </div>
+                      <div className="rule-type-badge" style={{ paddingLeft: 25, marginBottom: 4 }}>{describeType(rule)}</div>
                       {rule.description && <div className="pattern-body">{rule.description}</div>}
                       <div className="rule-footer">
                         <div className="rule-footer-stats">

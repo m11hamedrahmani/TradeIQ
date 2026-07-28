@@ -20,7 +20,7 @@ async function fetchTrades(userId, start, end) {
   return prisma.trade.findMany({
     where,
     orderBy: { entryTime: 'asc' },
-    include: { rule: { select: { id: true, title: true } } },
+    include: { ruleBreaks: { include: { rule: { select: { id: true, title: true } } } } },
   });
 }
 

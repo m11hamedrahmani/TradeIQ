@@ -1,9 +1,14 @@
 const prisma = require('../config/db');
 const { getPeriodRange } = require('../utils/period');
+const { dayBounds, weekBounds } = require('../utils/dateBuckets');
 const { parseTradesCsv } = require('../services/csv.service');
-const { parseGradeLabel, inferGradeFromRR, inferSessionFromDate } = require('../services/grading.service');
+const { parseGradeLabel, inferSessionFromDate } = require('../services/grading.service');
+const { evaluateActiveRules } = require('../services/rule-engine.service');
+const { computeAutoGrade } = require('../services/grading-engine.service');
 
-const RULE_INCLUDE = { rule: { select: { id: true, title: true } } };
+const RULE_BREAKS_INCLUDE = {
+  ruleBreaks: { include: { rule: { select: { id: true, title: true, weight: true, type: true } } } },
+};
 
 function toDateRangeWhere(userId, period, from, to) {
   const where = { userId };
@@ -30,7 +35,7 @@ async function list(req, res, next) {
     const trades = await prisma.trade.findMany({
       where,
       orderBy: { entryTime: 'desc' },
-      include: RULE_INCLUDE,
+      include: RULE_BREAKS_INCLUDE,
     });
     res.json({ trades });
   } catch (err) {
@@ -42,7 +47,7 @@ async function getOne(req, res, next) {
   try {
     const trade = await prisma.trade.findFirst({
       where: { id: req.params.id, userId: req.userId },
-      include: RULE_INCLUDE,
+      include: RULE_BREAKS_INCLUDE,
     });
     if (!trade) return res.status(404).json({ error: 'Trade not found' });
     res.json({ trade });
@@ -75,15 +80,9 @@ function buildTradeData(body) {
   }
 
   const rr = body.rr !== undefined && body.rr !== null && body.rr !== '' ? Number(body.rr) : null;
-  const grade = parseGradeLabel(body.grade) || inferGradeFromRR(rr) || (Number(body.pnl) >= 0 ? 'B' : 'C');
   const session = ['ASIAN', 'LONDON', 'NEWYORK', 'OTHER'].includes(body.session)
     ? body.session
     : inferSessionFromDate(entryTime);
-
-  // Linking a specific rule always implies the trade broke a rule, even if
-  // the ruleBroken checkbox wasn't explicitly ticked by the caller.
-  const ruleId = body.ruleId !== undefined && body.ruleId !== null && body.ruleId !== '' ? body.ruleId : null;
-  const ruleBroken = ruleId ? true : body.ruleBroken !== undefined ? Boolean(body.ruleBroken) : false;
 
   return {
     symbol: body.symbol.toUpperCase(),
@@ -95,31 +94,54 @@ function buildTradeData(body) {
     exitTime: body.exitTime ? new Date(body.exitTime) : null,
     pnl: Number(body.pnl),
     rr,
-    grade,
     session,
     entryConfirmed: body.entryConfirmed !== undefined ? Boolean(body.entryConfirmed) : true,
-    ruleBroken,
-    ruleId,
     ruleNote: body.ruleNote || null,
     notes: body.notes || null,
   };
 }
 
-async function assertRuleOwnership(userId, ruleId) {
-  if (!ruleId) return;
-  const rule = await prisma.rule.findFirst({ where: { id: ruleId, userId } });
-  if (!rule) {
-    const err = new Error('Invalid rule selected');
-    err.status = 400;
-    throw err;
+// Resolves the confirmed rule-break set + grade for a trade being saved.
+// `body.ruleIds` is the final, user-confirmed list of rules this trade broke
+// (pre-populated in the UI by the auto-evaluate preview, but editable) — the
+// server trusts ownership-validated ids and computes grade from their weights.
+async function resolveRulesAndGrade(userId, body) {
+  const ruleIds = Array.isArray(body.ruleIds) ? [...new Set(body.ruleIds.filter(Boolean))] : [];
+
+  let rules = [];
+  if (ruleIds.length) {
+    rules = await prisma.rule.findMany({ where: { id: { in: ruleIds }, userId } });
+    if (rules.length !== ruleIds.length) {
+      const err = new Error('One or more selected rules are invalid');
+      err.status = 400;
+      throw err;
+    }
   }
+
+  const { grade: autoGrade } = computeAutoGrade(rules.map((r) => r.weight));
+  const overrideLabel = body.gradeOverride ? parseGradeLabel(body.gradeOverride) : null;
+  const grade = overrideLabel || autoGrade;
+  const gradeOverridden = Boolean(overrideLabel);
+  const ruleBroken = ruleIds.length > 0 || Boolean(body.ruleBroken);
+
+  return { ruleIds, autoGrade, grade, gradeOverridden, ruleBroken };
 }
 
 async function create(req, res, next) {
   try {
     const data = buildTradeData(req.body);
-    await assertRuleOwnership(req.userId, data.ruleId);
-    const trade = await prisma.trade.create({ data: { ...data, userId: req.userId }, include: RULE_INCLUDE });
+    const { ruleIds, autoGrade, grade, gradeOverridden, ruleBroken } = await resolveRulesAndGrade(req.userId, req.body);
+
+    const trade = await prisma.$transaction(async (tx) => {
+      const created = await tx.trade.create({
+        data: { ...data, userId: req.userId, grade, autoGrade, gradeOverridden, ruleBroken },
+      });
+      if (ruleIds.length) {
+        await tx.tradeRuleBreak.createMany({ data: ruleIds.map((ruleId) => ({ tradeId: created.id, ruleId })) });
+      }
+      return tx.trade.findUnique({ where: { id: created.id }, include: RULE_BREAKS_INCLUDE });
+    });
+
     res.status(201).json({ trade });
   } catch (err) {
     next(err);
@@ -133,8 +155,20 @@ async function update(req, res, next) {
 
     const merged = { ...existing, ...req.body };
     const data = buildTradeData(merged);
-    await assertRuleOwnership(req.userId, data.ruleId);
-    const trade = await prisma.trade.update({ where: { id: existing.id }, data, include: RULE_INCLUDE });
+    const { ruleIds, autoGrade, grade, gradeOverridden, ruleBroken } = await resolveRulesAndGrade(req.userId, req.body);
+
+    const trade = await prisma.$transaction(async (tx) => {
+      await tx.tradeRuleBreak.deleteMany({ where: { tradeId: existing.id } });
+      await tx.trade.update({
+        where: { id: existing.id },
+        data: { ...data, grade, autoGrade, gradeOverridden, ruleBroken },
+      });
+      if (ruleIds.length) {
+        await tx.tradeRuleBreak.createMany({ data: ruleIds.map((ruleId) => ({ tradeId: existing.id, ruleId })) });
+      }
+      return tx.trade.findUnique({ where: { id: existing.id }, include: RULE_BREAKS_INCLUDE });
+    });
+
     res.json({ trade });
   } catch (err) {
     next(err);
@@ -152,6 +186,48 @@ async function remove(req, res, next) {
   }
 }
 
+// Preview endpoint: given a draft trade's key fields, returns which active
+// structured rules it would violate, so the UI can pre-check the rule
+// checklist before the user confirms and saves. Not authoritative — the
+// confirmed ruleIds[] sent on create/update is what actually gets stored.
+async function evaluate(req, res, next) {
+  try {
+    const { entryTime, pnl, rr, entryConfirmed, excludeTradeId } = req.body;
+    const time = entryTime ? new Date(entryTime) : null;
+    if (!time || Number.isNaN(time.getTime())) {
+      return res.status(400).json({ error: 'entryTime is required' });
+    }
+
+    const candidate = {
+      entryTime: time,
+      pnl: pnl !== undefined && pnl !== null && pnl !== '' ? Number(pnl) : 0,
+      rr: rr !== undefined && rr !== null && rr !== '' ? Number(rr) : null,
+      entryConfirmed: entryConfirmed !== undefined ? Boolean(entryConfirmed) : true,
+    };
+
+    const { start: dayStart, end: dayEnd } = dayBounds(time);
+    const { start: weekStart, end: weekEnd } = weekBounds(time);
+    const excludeClause = excludeTradeId ? { id: { not: excludeTradeId } } : {};
+
+    const [rules, sameDayTrades, sameWeekTrades] = await Promise.all([
+      prisma.rule.findMany({ where: { userId: req.userId, active: true } }),
+      prisma.trade.findMany({
+        where: { userId: req.userId, entryTime: { gte: dayStart, lt: dayEnd }, ...excludeClause },
+        select: { pnl: true },
+      }),
+      prisma.trade.findMany({
+        where: { userId: req.userId, entryTime: { gte: weekStart, lt: weekEnd }, ...excludeClause },
+        select: { pnl: true },
+      }),
+    ]);
+
+    const violatedRuleIds = evaluateActiveRules({ candidate, sameDayTrades, sameWeekTrades, rules });
+    res.json({ violatedRuleIds });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function importCsv(req, res, next) {
   try {
     if (!req.file) {
@@ -162,7 +238,7 @@ async function importCsv(req, res, next) {
 
     if (trades.length > 0) {
       await prisma.trade.createMany({
-        data: trades.map((t) => ({ ...t, userId: req.userId })),
+        data: trades.map((t) => ({ ...t, userId: req.userId, autoGrade: t.grade })),
       });
     }
 
@@ -176,4 +252,4 @@ async function importCsv(req, res, next) {
   }
 }
 
-module.exports = { list, getOne, create, update, remove, importCsv };
+module.exports = { list, getOne, create, update, remove, importCsv, evaluate };

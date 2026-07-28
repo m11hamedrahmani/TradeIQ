@@ -105,13 +105,25 @@ export default function Trades() {
                       </td>
                       <td><span className="trade-symbol">{t.symbol}</span></td>
                       <td><span className={`trade-dir ${t.direction.toLowerCase()}`}>{t.direction}</span></td>
-                      <td><span className={`trade-grade ${gradeClass(t.grade === 'APLUS' ? 'A+' : t.grade)}`}>{t.grade === 'APLUS' ? 'A+' : t.grade}</span></td>
+                      <td>
+                        <span className={`trade-grade ${gradeClass(t.grade === 'APLUS' ? 'A+' : t.grade)}`}>{t.grade === 'APLUS' ? 'A+' : t.grade}</span>
+                        {t.gradeOverridden && (
+                          <span
+                            title={`Auto-graded ${t.autoGrade === 'APLUS' ? 'A+' : t.autoGrade}, manually set to ${t.grade === 'APLUS' ? 'A+' : t.grade}`}
+                            style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 4 }}
+                          >
+                            ✎
+                          </span>
+                        )}
+                      </td>
                       <td style={{ fontSize: 12, color: 'var(--muted)' }}>{SESSION_LABELS[t.session]}</td>
                       <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12 }}>{t.rr !== null ? `${t.rr}R` : '—'}</td>
                       <td><span className={`trade-pnl ${t.pnl >= 0 ? 'pos' : 'neg'}`}>{money(t.pnl)}</span></td>
                       <td style={{ fontSize: 11, color: 'var(--muted)' }}>
                         {t.ruleBroken ? (
-                          <span title={t.ruleNote || ''}>⚠️ {t.rule ? t.rule.title : t.ruleNote ? 'Other' : ''}</span>
+                          <span title={t.ruleNote || ''}>
+                            ⚠️ {t.ruleBreaks && t.ruleBreaks.length ? t.ruleBreaks.map((b) => b.rule.title).join(', ') : t.ruleNote ? 'Other' : ''}
+                          </span>
                         ) : (
                           ''
                         )}

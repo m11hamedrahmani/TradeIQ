@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 
 function toLocalInputValue(iso) {
@@ -8,7 +8,20 @@ function toLocalInputValue(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const GRADE_OPTIONS = ['', 'A+', 'A', 'B', 'C', 'D'];
+// Mirrors backend/src/services/grading-engine.service.js so the form can show
+// an instant grade preview without a round trip on every checkbox toggle.
+const WEIGHT_POINTS = { LOW: 10, MEDIUM: 20, HIGH: 35 };
+function previewGrade(weights) {
+  const deduction = weights.reduce((s, w) => s + (WEIGHT_POINTS[w] || 0), 0);
+  const score = Math.max(0, 100 - deduction);
+  if (score >= 100) return 'A+';
+  if (score >= 80) return 'A';
+  if (score >= 60) return 'B';
+  if (score >= 35) return 'C';
+  return 'D';
+}
+
+const GRADE_OPTIONS = ['A+', 'A', 'B', 'C', 'D'];
 const SESSION_OPTIONS = [
   ['', 'Auto (from entry time)'],
   ['ASIAN', 'Asian'],
@@ -19,6 +32,8 @@ const SESSION_OPTIONS = [
 
 export default function TradeForm({ trade, onClose, onSaved }) {
   const isEdit = Boolean(trade);
+  const existingRuleIds = trade?.ruleBreaks?.map((b) => b.ruleId) || [];
+
   const [form, setForm] = useState({
     symbol: trade?.symbol || '',
     direction: trade?.direction || 'BUY',
@@ -29,17 +44,19 @@ export default function TradeForm({ trade, onClose, onSaved }) {
     size: trade?.size ?? '',
     pnl: trade?.pnl ?? '',
     rr: trade?.rr ?? '',
-    grade: trade?.grade === 'APLUS' ? 'A+' : trade?.grade || '',
     session: trade?.session || '',
     entryConfirmed: trade?.entryConfirmed ?? true,
-    ruleBroken: trade?.ruleBroken ?? false,
-    ruleId: trade?.ruleId || trade?.rule?.id || '',
+    ruleIds: existingRuleIds,
+    otherRuleBroken: trade ? trade.ruleBroken && existingRuleIds.length === 0 : false,
     ruleNote: trade?.ruleNote || '',
     notes: trade?.notes || '',
+    overrideGrade: trade?.gradeOverridden ?? false,
+    gradeChoice: trade?.grade === 'APLUS' ? 'A+' : trade?.grade || 'A+',
   });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [rules, setRules] = useState([]);
+  const [suggestedRuleIds, setSuggestedRuleIds] = useState([]);
 
   useEffect(() => {
     api
@@ -48,9 +65,45 @@ export default function TradeForm({ trade, onClose, onSaved }) {
       .catch(() => setRules([]));
   }, []);
 
+  // Auto-suggest which structured rules this trade likely broke, based on
+  // sibling trades already in the DB. Purely additive — never unchecks a box
+  // the user has control over, and never overrides a manual override grade.
+  useEffect(() => {
+    if (!form.entryTime) return;
+    const timer = setTimeout(() => {
+      api
+        .evaluateTrade({
+          entryTime: new Date(form.entryTime).toISOString(),
+          pnl: form.pnl === '' ? 0 : Number(form.pnl),
+          rr: form.rr === '' ? null : Number(form.rr),
+          entryConfirmed: form.entryConfirmed,
+          excludeTradeId: trade?.id,
+        })
+        .then((res) => {
+          setSuggestedRuleIds(res.violatedRuleIds);
+          setForm((f) => ({ ...f, ruleIds: Array.from(new Set([...f.ruleIds, ...res.violatedRuleIds])) }));
+        })
+        .catch(() => {});
+    }, 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.entryTime, form.pnl, form.rr, form.entryConfirmed]);
+
   function set(key, value) {
     setForm((f) => ({ ...f, [key]: value }));
   }
+
+  function toggleRule(ruleId) {
+    setForm((f) => ({
+      ...f,
+      ruleIds: f.ruleIds.includes(ruleId) ? f.ruleIds.filter((id) => id !== ruleId) : [...f.ruleIds, ruleId],
+    }));
+  }
+
+  const autoGrade = useMemo(() => {
+    const weights = rules.filter((r) => form.ruleIds.includes(r.id)).map((r) => r.weight);
+    return previewGrade(weights);
+  }, [rules, form.ruleIds]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -67,12 +120,12 @@ export default function TradeForm({ trade, onClose, onSaved }) {
         size: form.size === '' ? null : Number(form.size),
         pnl: Number(form.pnl),
         rr: form.rr === '' ? null : Number(form.rr),
-        grade: form.grade || undefined,
         session: form.session || undefined,
         entryConfirmed: form.entryConfirmed,
-        ruleBroken: form.ruleBroken,
-        ruleId: form.ruleBroken ? form.ruleId || null : null,
-        ruleNote: form.ruleBroken ? form.ruleNote || null : null,
+        ruleIds: form.ruleIds,
+        ruleBroken: form.otherRuleBroken,
+        ruleNote: form.otherRuleBroken || form.ruleIds.length ? form.ruleNote || null : null,
+        gradeOverride: form.overrideGrade ? form.gradeChoice : null,
         notes: form.notes || null,
       };
 
@@ -145,15 +198,6 @@ export default function TradeForm({ trade, onClose, onSaved }) {
               <input type="number" step="any" value={form.pnl} onChange={(e) => set('pnl', e.target.value)} required />
             </div>
             <div className="field">
-              <label>Grade</label>
-              <select value={form.grade} onChange={(e) => set('grade', e.target.value)}>
-                {GRADE_OPTIONS.map((g) => (
-                  <option key={g} value={g}>{g === '' ? 'Auto (from RR)' : g}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="field full">
               <label>Session</label>
               <select value={form.session} onChange={(e) => set('session', e.target.value)}>
                 {SESSION_OPTIONS.map(([val, label]) => (
@@ -172,35 +216,67 @@ export default function TradeForm({ trade, onClose, onSaved }) {
               <label htmlFor="entryConfirmed">Entered after confirmation (not early)</label>
             </div>
 
+            <div className="field full">
+              <label>Rules broken (check all that apply)</label>
+              <div className="rule-checklist">
+                {rules.length === 0 && <div className="empty-state" style={{ padding: '4px 0' }}>No rules defined yet.</div>}
+                {rules.map((r) => (
+                  <div className={`rule-check-row${suggestedRuleIds.includes(r.id) ? ' suggested' : ''}`} key={r.id}>
+                    <input
+                      type="checkbox"
+                      id={`rule-${r.id}`}
+                      checked={form.ruleIds.includes(r.id)}
+                      onChange={() => toggleRule(r.id)}
+                    />
+                    <label htmlFor={`rule-${r.id}`}>
+                      {r.title}{!r.active ? ' (archived)' : ''}
+                    </label>
+                    {suggestedRuleIds.includes(r.id) && <span className="rule-suggested-tag">auto</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="field full checkbox-field">
               <input
                 type="checkbox"
-                id="ruleBroken"
-                checked={form.ruleBroken}
-                onChange={(e) => set('ruleBroken', e.target.checked)}
+                id="otherRuleBroken"
+                checked={form.otherRuleBroken}
+                onChange={(e) => set('otherRuleBroken', e.target.checked)}
               />
-              <label htmlFor="ruleBroken">This trade broke one of my rules</label>
+              <label htmlFor="otherRuleBroken">Broke something else (not listed above)</label>
             </div>
 
-            {form.ruleBroken && (
-              <>
-                <div className="field full">
-                  <label>Which Rule?</label>
-                  <select value={form.ruleId} onChange={(e) => set('ruleId', e.target.value)}>
-                    <option value="">Unspecified / other</option>
-                    {rules.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.title}{!r.active ? ' (archived)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field full">
-                  <label>Rule Note</label>
-                  <input value={form.ruleNote} onChange={(e) => set('ruleNote', e.target.value)} placeholder="extra context, optional" />
-                </div>
-              </>
+            {(form.ruleIds.length > 0 || form.otherRuleBroken) && (
+              <div className="field full">
+                <label>Rule-break note (optional)</label>
+                <input value={form.ruleNote} onChange={(e) => set('ruleNote', e.target.value)} placeholder="extra context" />
+              </div>
             )}
+
+            <div className="field full">
+              <div className="grade-preview">
+                <span className="grade-preview-label">{form.overrideGrade ? 'Your grade' : 'Auto grade'}</span>
+                <span className="grade-preview-value">{form.overrideGrade ? form.gradeChoice : autoGrade}</span>
+                {!form.overrideGrade && <span className="field-hint" style={{ margin: 0 }}>computed from rules broken above</span>}
+              </div>
+              <div className="checkbox-field" style={{ marginBottom: form.overrideGrade ? 10 : 0 }}>
+                <input
+                  type="checkbox"
+                  id="overrideGrade"
+                  checked={form.overrideGrade}
+                  onChange={(e) => set('overrideGrade', e.target.checked)}
+                />
+                <label htmlFor="overrideGrade">Override with my own grade</label>
+              </div>
+              {form.overrideGrade && (
+                <select value={form.gradeChoice} onChange={(e) => set('gradeChoice', e.target.value)}>
+                  {GRADE_OPTIONS.map((g) => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              )}
+            </div>
 
             <div className="field full">
               <label>Notes</label>
