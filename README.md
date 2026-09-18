@@ -2,6 +2,14 @@
 
 A full-stack trading journal: log trades, grade your setups, and see real analytics (P&L heatmap, grade breakdown, session performance, and rule-based "AI coach" insights) computed from your own data — no mock numbers.
 
+## Quick start (one click)
+
+1. Install [Node.js](https://nodejs.org) and [Docker Desktop](https://www.docker.com/products/docker-desktop).
+2. Start Docker Desktop.
+3. Double-click `run.bat` (Windows) or `run.command` (Mac).
+
+The script starts Postgres, installs dependencies, runs migrations, seeds demo data on first run, and opens the app at `http://localhost:5173`. Demo login: `demo@tradeiq.app` / `demo1234`.
+
 ## Stack
 
 - **Frontend**: React 18 + Vite, React Router, Chart.js
