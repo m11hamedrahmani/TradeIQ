@@ -25,9 +25,13 @@ tradeiq/
   docker-compose.yml   optional: Postgres via Docker
 ```
 
-## Prerequisites
+## Manual setup (advanced)
 
-You need Node.js 18+ and a running PostgreSQL instance. This machine didn't have either installed when this project was generated, so set them up first:
+Skip this if you used the one-click launcher above — it does all of this for you. Use this if you want to run things step by step, customize the setup, or don't want to use Docker.
+
+### 0. Prerequisites
+
+You need Node.js 18+ and a running PostgreSQL instance.
 
 **Node.js** — install via [nodejs.org](https://nodejs.org) or Homebrew:
 ```
@@ -45,8 +49,6 @@ or via Docker, using the included `docker-compose.yml`:
 ```
 docker compose up -d
 ```
-
-## Setup
 
 ### 1. Backend
 
